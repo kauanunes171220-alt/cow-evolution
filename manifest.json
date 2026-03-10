@@ -1,0 +1,15 @@
+{
+  "name": "Cow Evolution Clone",
+  "short_name": "CowEvo",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#a8e6cf",
+  "theme_color": "#3498db",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/1998/1998610.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

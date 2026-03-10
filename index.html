@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<link rel="manifest" href="manifest.json">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cow Evolution Clone</title>
+    <style>
+        :root {
+            --bg-color: #a8e6cf;
+            --text-color: #333;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, sans-serif;
+            background-color: var(--bg-color);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden; /* Previne scroll no mobile */
+        }
+
+        #ui-panel {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 10;
+        }
+
+        .money-display { font-size: 28px; font-weight: bold; color: #2ecc71; }
+        
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        button:active { transform: scale(0.95); }
+        button:disabled { background-color: #bdc3c7; }
+
+        #btn-reset { background-color: #e74c3c; padding: 5px 10px; font-size: 12px; float: right; }
+
+        /* O Campo (Pasto) onde as vacas ficam livres */
+        #game-area {
+            flex-grow: 1;
+            position: relative;
+            background-color: #8ce33c;
+            border-top: 4px solid #6cb32d;
+            overflow: hidden;
+            touch-action: none; /* Crucial: evita que o celular dê zoom ou scroll ao arrastar */
+        }
+
+        /* Estilo da Vaca Draggable */
+        .vaca {
+            position: absolute;
+            font-size: 50px;
+            cursor: grab;
+            user-select: none;
+            text-align: center;
+            width: 60px;
+            height: 60px;
+            line-height: 60px;
+            transform: translate(-50%, -50%); /* Centraliza o clique no emoji */
+            transition: transform 0.1s;
+            z-index: 1;
+        }
+
+        .vaca:active {
+            cursor: grabbing;
+            z-index: 100; /* Traz pra frente ao arrastar */
+        }
+
+        .vaca-lv {
+            font-size: 12px;
+            background: rgba(255,255,255,0.8);
+            border-radius: 10px;
+            display: block;
+            line-height: 1;
+            margin-top: -10px;
+            font-weight: bold;
+        }
+
+        /* Efeito Visual de Dinheiro (Partículas) */
+        .particle {
+            position: absolute;
+            color: #ffeb3b;
+            font-weight: bold;
+            font-size: 20px;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+            pointer-events: none;
+            animation: floatUp 1s ease-out forwards;
+            z-index: 200;
+            transform: translate(-50%, -50%);
+        }
+
+        @keyframes floatUp {
+            0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+            100% { transform: translate(-50%, -100px) scale(1.5); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-panel">
+        <button id="btn-reset" onclick="resetarSave()">Reset</button>
+        <div class="money-display">R$ <span id="money">0</span></div>
+        <div style="font-size: 14px; color: #666;">
+            Ganhos: R$ <span id="gps">0</span> / seg
+        </div>
+        <button id="btn-buy" onclick="comprarVaca()">Comprar Vaca (R$ <span id="custo-vaca">10</span>)</button>
+    </div>
+
+    <div id="game-area"></div>
+
+    <script>
+        /* =========================================
+           CONFIGURAÇÕES PRINCIPAIS
+           ========================================= */
+        const CONFIG = {
+            custoInicial: 1,
+            multiplicadorCusto: 2,
+            distanciaMerge: 50 // Distância em pixels para considerar que uma bateu na outra
+        };
+
+                const COW_STATS = {
+            1: { emoji: '🐄', cps: 1, clickValue: 1 },
+            2: { emoji: '🐂', cps: 4, clickValue: 3 },
+            3: { emoji: '🐃', cps: 15, clickValue: 10 },
+            4: { emoji: '🐑', cps: 50, clickValue: 35 },
+            5: { emoji: '🐏', cps: 200, clickValue: 100 },
+            6: { emoji: '🐐', cps: 350, clickValue: 125 },
+            7: { emoji: '🦌', cps: 600, clickValue: 200 },
+            8: { emoji: '🦙', cps: 1200, clickValue: 450 },
+            9: { emoji: '🐘', cps: 2500, clickValue: 900 },
+            10: { emoji: '🦣', cps: 5500, clickValue: 2000 },
+            11: { emoji: '🐍', cps: 12000, clickValue: 4500 },
+            12: { emoji: '🐊', cps: 25000, clickValue: 10000 },
+            13: { emoji: '🦕', cps: 60000, clickValue: 25000 },
+            14: { emoji: '🦖', cps: 150000, clickValue: 50000 },
+            15: { emoji: '🐉', cps: 400000, clickValue: 120000 },
+            16: { emoji: '🦄', cps: 1000000, clickValue: 500000 }
+        };
+
+        let gameState = {
+            money: 1,
+            custoAtual: CONFIG.custoInicial,
+            cows: [] // Agora armazena objetos: { id, level, x, y }
+        };
+
+        let dragState = {
+            element: null, id: null, offsetX: 0, offsetY: 0, isDragging: false, hasMoved: false
+        };
+
+        const gameArea = document.getElementById('game-area');
+
+        /* =========================================
+           LÓGICA DO JOGO E GAMELOOP
+           ========================================= */
+        
+        function init() {
+    carregarJogo();
+    atualizarUI();
+    
+    // Renderiza as vacas salvas no campo
+    gameState.cows.forEach(cow => criarElementoVaca(cow));
+
+    // Ganho passivo (1s)
+    setInterval(() => {
+        let ganho = calcularGanhosPorSegundo();
+        if (ganho > 0) {
+            gameState.money += ganho;
+            atualizarMoneyUI();
+        }
+    }, 1000);
+
+    // --- ADICIONE ESTE BLOCO AQUI ---
+    // Gerador Automático de Vaca (10s)
+    setInterval(() => {
+        gerarVacaGratis();
+    }, 10000); 
+    // --------------------------------
+
+    setInterval(salvarJogo, 3000);
+}
+
+        function calcularGanhosPorSegundo() {
+            return gameState.cows.reduce((total, cow) => total + COW_STATS[cow.level].cps, 0);
+        }
+
+        function comprarVaca() {
+            if (gameState.money >= gameState.custoAtual) {
+                gameState.money -= gameState.custoAtual;
+                gameState.custoAtual = Math.floor(gameState.custoAtual * CONFIG.multiplicadorCusto);
+                
+                // Nasce em um lugar aleatório do pasto
+                let areaRect = gameArea.getBoundingClientRect();
+                let novaVaca = {
+                    id: Date.now() + Math.random(), // ID único
+                    level: 1,
+                    x: Math.random() * (areaRect.width - 60) + 30,
+                    y: Math.random() * (areaRect.height - 60) + 30
+                };
+                
+                gameState.cows.push(novaVaca);
+                criarElementoVaca(novaVaca);
+                atualizarUI();
+                salvarJogo();
+            }
+        }
+
+        /* =========================================
+           SISTEMA DE DRAG & DROP E MERGE
+           ========================================= */
+
+        function criarElementoVaca(cowData) {
+            const div = document.createElement('div');
+            div.className = 'vaca';
+            div.id = 'cow-' + cowData.id;
+            div.style.left = cowData.x + 'px';
+            div.style.top = cowData.y + 'px';
+            
+            div.innerHTML = `
+                ${COW_STATS[cowData.level].emoji}
+                <span class="vaca-lv">Lv ${cowData.level}</span>
+            `;
+
+            // Pointer Events unificam Mouse e Touch perfeitamente
+            div.addEventListener('pointerdown', iniciarDrag);
+            gameArea.appendChild(div);
+        }
+
+function gerarVacaGratis() {
+    // Definimos um limite para o pasto não explodir de tantas vacas (ex: 20 vacas)
+    if (gameState.cows.length >= 20) {
+        console.log("Pasto cheio! Junte suas vacas para ganhar mais espaço.");
+        return; 
+    }
+
+    let areaRect = gameArea.getBoundingClientRect();
+    let novaVaca = {
+        id: Date.now() + Math.random(),
+        level: 1,
+        x: Math.random() * (areaRect.width - 60) + 30,
+        y: Math.random() * (areaRect.height - 60) + 30
+    };
+    
+    gameState.cows.push(novaVaca);
+    criarElementoVaca(novaVaca);
+    
+    // Efeito visual para avisar que uma vaca "caiu" no pasto
+    criarParticula("🎁 Vaca Grátis!", novaVaca.x, novaVaca.y, "#ffffff");
+    
+    atualizarUI();
+    salvarJogo();
+}
+
+        function iniciarDrag(e) {
+            e.preventDefault();
+            const element = e.currentTarget;
+            const cowId = parseFloat(element.id.split('-')[1]);
+            
+            dragState.element = element;
+            dragState.id = cowId;
+            dragState.isDragging = true;
+            dragState.hasMoved = false;
+
+            // Calcula onde o clique/touch aconteceu dentro do elemento
+            const rect = element.getBoundingClientRect();
+            const areaRect = gameArea.getBoundingClientRect();
+            
+            // Adiciona listeners no documento para poder arrastar rápido sem perder o alvo
+            document.addEventListener('pointermove', arrastar);
+            document.addEventListener('pointerup', soltar);
+            
+            element.style.transform = 'translate(-50%, -50%) scale(1.2)';
+        }
+
+        function arrastar(e) {
+    if (!dragState.isDragging) return;
+
+    const areaRect = gameArea.getBoundingClientRect();
+    let newX = e.clientX - areaRect.left;
+    let newY = e.clientY - areaRect.top;
+
+    // Só marca como "movido" se o dedo se deslocar mais de 5 pixels
+    // Isso evita que tremores do dedo anulem o clique
+    if (Math.abs(newX - (parseFloat(dragState.element.style.left))) > 5 || 
+        Math.abs(newY - (parseFloat(dragState.element.style.top))) > 5) {
+        dragState.hasMoved = true;
+    }
+
+    // Limites do campo
+    newX = Math.max(30, Math.min(newX, areaRect.width - 30));
+    newY = Math.max(30, Math.min(newY, areaRect.height - 30));
+
+    dragState.element.style.left = newX + 'px';
+    dragState.element.style.top = newY + 'px';
+    dragState.element.style.zIndex = "1000";
+
+    let cowData = gameState.cows.find(c => c.id === dragState.id);
+    if (cowData) {
+        cowData.x = newX;
+        cowData.y = newY;
+    }
+}
+
+ function soltar(e) {
+    if (!dragState.isDragging) return;
+    
+    // Remove os listeners de movimento
+    document.removeEventListener('pointermove', arrastar);
+    document.removeEventListener('pointerup', soltar);
+    
+    // Reseta o visual da vaca (tira o zoom de arrasto)
+    dragState.element.style.transform = 'translate(-50%, -50%) scale(1)';
+    dragState.element.style.zIndex = "1";
+    dragState.isDragging = false;
+
+    let cowArrastada = gameState.cows.find(c => c.id === dragState.id);
+    
+    // --- O SEGREDO ESTÁ AQUI ---
+    // Se a vaca se moveu menos de 5 pixels, o jogo considera um CLIQUE
+    if (!dragState.hasMoved && cowArrastada) {
+        gerarDinheiroClique(cowArrastada);
+        
+        // Pequena animação de "pulo" ao clicar
+        dragState.element.animate([
+            { transform: 'translate(-50%, -50%) scale(1)' },
+            { transform: 'translate(-50%, -50%) scale(1.3)' },
+            { transform: 'translate(-50%, -50%) scale(1)' }
+        ], { duration: 100 });
+        
+        return;
+    }
+
+    // Se ela se moveu, tenta fazer o Merge
+    if (cowArrastada) {
+        tentarMerge(cowArrastada);
+    }
+    
+    dragState.element = null;
+    dragState.id = null;
+}
+
+        function tentarMerge(cowArrastada) {
+            for (let i = 0; i < gameState.cows.length; i++) {
+                let outraCow = gameState.cows[i];
+                
+                // Ignora a si mesma
+                if (outraCow.id === cowArrastada.id) continue;
+
+                // Checa se são do mesmo nível e se existe uma evolução possível
+                if (outraCow.level === cowArrastada.level && COW_STATS[cowArrastada.level + 1]) {
+                    
+                    // Pitágoras para calcular a distância entre os dois pontos centrais
+                    let dx = cowArrastada.x - outraCow.x;
+                    let dy = cowArrastada.y - outraCow.y;
+                    let distancia = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distancia < CONFIG.distanciaMerge) {
+                        // Colidiu e são do mesmo level! Fazer o Merge!
+                        
+                        // Remove elementos visuais
+                        document.getElementById('cow-' + cowArrastada.id).remove();
+                        document.getElementById('cow-' + outraCow.id).remove();
+
+                        // Remove do array de estado
+                        gameState.cows = gameState.cows.filter(c => c.id !== cowArrastada.id && c.id !== outraCow.id);
+
+                        // Cria a nova Vaca Evoluída na posição da que estava parada
+                        let vacaEvoluida = {
+                            id: Date.now(),
+                            level: cowArrastada.level + 1,
+                            x: outraCow.x,
+                            y: outraCow.y
+                        };
+                        
+                        gameState.cows.push(vacaEvoluida);
+                        criarElementoVaca(vacaEvoluida);
+                        
+                        // Efeito visual no merge (Partícula de "Level Up!")
+                        criarParticula("⭐ Nível " + vacaEvoluida.level, outraCow.x, outraCow.y, '#fff');
+                        
+                        atualizarUI();
+                        salvarJogo();
+                        break; // Para o loop após um merge
+                    }
+                }
+            }
+        }
+
+        /* =========================================
+           EFEITOS VISUAIS E UI
+           ========================================= */
+
+        function gerarDinheiroClique(cow) {
+            let ganho = COW_STATS[cow.level].clickValue;
+            gameState.money += ganho;
+            atualizarMoneyUI();
+            
+            // Cria a partícula de texto flutuante
+            criarParticula("+" + ganho, cow.x, cow.y - 20, '#ffeb3b');
+        }
+
+        function criarParticula(texto, x, y, cor) {
+            const part = document.createElement('div');
+            part.className = 'particle';
+            part.innerText = texto;
+            part.style.left = x + 'px';
+            part.style.top = y + 'px';
+            part.style.color = cor;
+            
+            gameArea.appendChild(part);
+            
+            // Remove o elemento do DOM após a animação (1 segundo)
+            setTimeout(() => {
+                part.remove();
+            }, 1000);
+        }
+
+        function atualizarMoneyUI() {
+            document.getElementById('money').innerText = Math.floor(gameState.money);
+            document.getElementById('btn-buy').disabled = gameState.money < gameState.custoAtual;
+        }
+
+        function atualizarUI() {
+            atualizarMoneyUI();
+            document.getElementById('custo-vaca').innerText = gameState.custoAtual;
+            document.getElementById('gps').innerText = calcularGanhosPorSegundo();
+        }
+
+        /* =========================================
+           SISTEMA DE SAVE
+           ========================================= */
+        
+        function salvarJogo() {
+            localStorage.setItem('cowEvoSave', JSON.stringify(gameState));
+        }
+
+        function carregarJogo() {
+            const save = localStorage.getItem('cowEvoSave');
+            if (save) {
+                try {
+                    gameState = JSON.parse(save);
+                } catch (e) { console.error(e); }
+            }
+        }
+
+                function resetarSave() {
+            if(confirm("Deseja apagar tudo?")) {
+                localStorage.removeItem('cowEvoSave');
+                location.reload();
+            }
+        }
+
+        // REGISTRO DO SERVICE WORKER (Fora de qualquer função para rodar sempre)
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('./sw.js')
+            .then(() => console.log("Service Worker registrado com sucesso!"))
+            .catch(err => console.log("Erro ao registrar Service Worker:", err));
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
+
